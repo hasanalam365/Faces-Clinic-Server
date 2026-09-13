@@ -2,6 +2,8 @@ const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
 
+const { handleStripeWebhook } = require("./controllers/payments.controller");
+
 const app = express();
 
 /* =======================
@@ -10,10 +12,8 @@ const app = express();
 const corsOptions = {
   origin: [
     "http://localhost:5173",
-    "https://arabian-essense.vercel.app",
-    "https://arabianessence.co.uk",
-    "https://www.arabianessence.co.uk"
-  ],
+    process.env.CLIENT_URL,
+  ].filter(Boolean),
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
@@ -26,6 +26,17 @@ app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
 /* =======================
+   STRIPE WEBHOOK
+   Must come BEFORE express.json(), because Stripe needs the raw,
+   unparsed request body to verify the webhook signature.
+======================= */
+app.post(
+  "/payments/webhook",
+  express.raw({ type: "application/json" }),
+  handleStripeWebhook
+);
+
+/* =======================
    MIDDLEWARE
 ======================= */
 app.use(express.json());
@@ -34,18 +45,13 @@ app.use(express.json());
    ROUTES
 ======================= */
 app.use("/", require("./routes/auth.routes"));
-app.use("/users", require("./routes/users.routes"));
-app.use("/products", require("./routes/products.routes"));
-app.use("/orders", require("./routes/orders.routes"));
 app.use("/", require("./routes/payments.routes"));
-app.use("/", require("./routes/freeSample.routes"));
-
 
 /* =======================
    ROOT
 ======================= */
 app.get("/", (req, res) => {
-  res.send("Arabian Essense Server is Working");
+  res.send("Faces On Faces Server is Working");
 });
 
 module.exports = app;
