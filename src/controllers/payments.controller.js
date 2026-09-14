@@ -1,5 +1,6 @@
 // controllers/payments.controller.js
 const stripe = require("../config/stripe");
+const { handleAcademyCourseCompleted } = require("./academyPayments.controller");
 
 const DEPOSIT_PERCENTAGE = 0.2; // 20% deposit at booking, rest paid on the day
 
@@ -59,6 +60,7 @@ exports.createDepositCheckoutSession = async (req, res) => {
         },
       ],
       metadata: {
+        bookingType: "treatment_deposit",
         treatmentId: treatmentId || "",
         treatmentName,
         totalPrice: total.toFixed(2),
@@ -130,6 +132,16 @@ exports.handleStripeWebhook = (req, res) => {
   switch (event.type) {
     case "checkout.session.completed": {
       const session = event.data.object;
+
+      // Same webhook endpoint now serves two booking flows — dispatch on
+      // metadata.bookingType so each keeps its own handling. Anything
+      // without bookingType (or "treatment_deposit") falls through to the
+      // original treatment-deposit behaviour, completely unchanged.
+      if (session.metadata?.bookingType === "academy_course") {
+        handleAcademyCourseCompleted(session);
+        break;
+      }
+
       // ✅ Deposit paid successfully.
       // TODO: once you have a database, save this booking here, and send a
       // confirmation email/SMS to the customer + a notification to the
