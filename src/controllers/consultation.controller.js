@@ -1,5 +1,5 @@
 const transporter = require("../config/mailer");
-const { appendRow } = require("../config/googleSheets");
+const { appendRow } = require("../config/googlesheets");
 
 const bookConsultation = async (req, res) => {
   try {
