@@ -8,7 +8,7 @@ const {
 const {
   createCourseCheckoutSession,
   verifyCourseCheckoutSession,
-} = require("../controllers/academyPayments.controller");
+} = require("../controllers/academypayments.controller");
 
 // Start a deposit payment for a treatment booking
 router.post("/payments/create-checkout-session", createDepositCheckoutSession);

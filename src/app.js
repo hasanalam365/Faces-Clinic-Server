@@ -46,6 +46,7 @@ app.use(express.json());
 ======================= */
 app.use("/", require("./routes/auth.routes"));
 app.use("/", require("./routes/payments.routes"));
+app.use("/", require("./routes/consultation.routes"));
 
 /* =======================
    ROOT

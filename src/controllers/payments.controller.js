@@ -1,6 +1,6 @@
 // controllers/payments.controller.js
 const stripe = require("../config/stripe");
-const { handleAcademyCourseCompleted } = require("./academyPayments.controller");
+const { handleAcademyCourseCompleted } = require("./academypayments.controller");
 
 const DEPOSIT_PERCENTAGE = 0.2; // 20% deposit at booking, rest paid on the day
 
