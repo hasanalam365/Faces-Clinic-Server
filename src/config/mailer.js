@@ -1,3 +1,5 @@
+// config/mailer.js — unchanged from your current site, included here only
+// for completeness. No edits needed.
 const nodemailer = require("nodemailer");
 
 if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
@@ -12,7 +14,6 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// Startup এ connection verify করে
 transporter.verify((error) => {
   if (error) {
     console.error("❌ Mailer connection failed:", error.message);

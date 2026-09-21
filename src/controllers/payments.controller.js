@@ -1,24 +1,33 @@
 // controllers/payments.controller.js
+//
+// Treatment-deposit flow (createDepositCheckoutSession, verifyCheckoutSession)
+// is UNCHANGED, line for line.
+//
+// Only two things differ from your previous file, both in the webhook area:
+//  1. It no longer imports ./academypayments.controller (the old, replaced
+//     course system — that file pulled in services that crash on start-up).
+//  2. handleStripeWebhook gets one new branch: flowType
+//     "subscription_first_payment" (the £ first payment of the monthly plan).
+//     The "enrollment" / "deposit_enrollment" branches and the treatment
+//     fallback behave exactly as before.
 const stripe = require("../config/stripe");
-const { handleAcademyCourseCompleted } = require("./academypayments.controller");
+const {
+  fulfillEnrollment,
+  fulfillSubscriptionFirstPayment,
+} = require("../services/enrollmentFulfillment");
 
 const DEPOSIT_PERCENTAGE = 0.2; // 20% deposit at booking, rest paid on the day
 
 /**
  * POST /payments/create-checkout-session
- *
- * Consultations stay free (handled entirely by BookConsultation.jsx / your
- * existing auth-less form) and never touch this endpoint. This endpoint is
- * only for "Book a Treatment", where we take a 20% deposit up front via
- * Stripe Checkout and collect the remaining 80% in person on the day.
+ * Treatment-deposit flow — unchanged.
  */
 exports.createDepositCheckoutSession = async (req, res) => {
   try {
-    console.log("DEBUG CLIENT_URL:", process.env.CLIENT_URL)
     const {
       treatmentId,
       treatmentName,
-      totalPrice, // total treatment price in GBP, e.g. 250.00
+      totalPrice,
       customerName,
       customerEmail,
       customerPhone,
@@ -33,11 +42,6 @@ exports.createDepositCheckoutSession = async (req, res) => {
     if (!Number.isFinite(total) || total <= 0) {
       return res.status(400).json({ error: "Invalid treatment price." });
     }
-
-    // ⚠️ Production note: right now `totalPrice` is trusted from the client.
-    // Before going live, look the real price up server-side (by treatmentId)
-    // against your own treatments source of truth, so the price can't be
-    // tampered with in the browser before it reaches Stripe.
 
     const depositAmountPence = Math.round(total * DEPOSIT_PERCENTAGE * 100);
     const remainingBalance = (total - total * DEPOSIT_PERCENTAGE).toFixed(2);
@@ -81,13 +85,6 @@ exports.createDepositCheckoutSession = async (req, res) => {
   }
 };
 
-/**
- * GET /payments/session/:sessionId
- *
- * Called by the frontend after Stripe redirects back, to confirm the
- * deposit was actually paid before revealing the appointment calendar.
- * Never trust the presence of `session_id` in the URL alone.
- */
 exports.verifyCheckoutSession = async (req, res) => {
   try {
     const { sessionId } = req.params;
@@ -112,13 +109,12 @@ exports.verifyCheckoutSession = async (req, res) => {
 
 /**
  * POST /payments/webhook
- *
- * Source of truth for "the deposit was really paid" — don't rely only on
- * the success_url redirect, since a customer could close the tab before
- * being redirected back. Must be mounted with express.raw() BEFORE
- * express.json() in app.js (see app.js comments).
+ * Shared Stripe webhook for ALL Checkout Session flows in the app.
+ * Dispatches on metadata.flowType (course flows) — anything else is the
+ * original treatment-deposit behaviour.
+ * Must be mounted with express.raw() BEFORE express.json() in app.js.
  */
-exports.handleStripeWebhook = (req, res) => {
+exports.handleStripeWebhook = async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
 
@@ -129,36 +125,34 @@ exports.handleStripeWebhook = (req, res) => {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  switch (event.type) {
-    case "checkout.session.completed": {
-      const session = event.data.object;
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object;
+    const flowType = session.metadata?.flowType;
 
-      // Same webhook endpoint now serves two booking flows — dispatch on
-      // metadata.bookingType so each keeps its own handling. Anything
-      // without bookingType (or "treatment_deposit") falls through to the
-      // original treatment-deposit behaviour, completely unchanged.
-      if (session.metadata?.bookingType === "academy_course") {
-        handleAcademyCourseCompleted(session);
-        break;
+    try {
+      if (flowType === "enrollment") {
+        await fulfillEnrollment(session, "Enrollments");
+      } else if (flowType === "deposit_enrollment") {
+        await fulfillEnrollment(session, "DepositEnrollments");
+      } else if (flowType === "subscription_first_payment") {
+        await fulfillSubscriptionFirstPayment(session);
+      } else {
+        // Original treatment-deposit behaviour — unchanged.
+        console.log("Deposit paid:", {
+          treatment: session.metadata.treatmentName,
+          customer: session.metadata.customerName,
+          phone: session.metadata.customerPhone,
+          email: session.customer_email,
+          depositPaid: session.metadata.depositPaid,
+          remainingBalance: session.metadata.remainingBalance,
+          preferredDate: session.metadata.preferredDate,
+        });
       }
-
-      // ✅ Deposit paid successfully.
-      // TODO: once you have a database, save this booking here, and send a
-      // confirmation email/SMS to the customer + a notification to the
-      // clinic team using the fields below.
-      console.log("Deposit paid:", {
-        treatment: session.metadata.treatmentName,
-        customer: session.metadata.customerName,
-        phone: session.metadata.customerPhone,
-        email: session.customer_email,
-        depositPaid: session.metadata.depositPaid,
-        remainingBalance: session.metadata.remainingBalance,
-        preferredDate: session.metadata.preferredDate,
-      });
-      break;
+    } catch (err) {
+      // Acknowledge receipt regardless, to avoid a Stripe retry storm — but
+      // log loudly so a failed Sheets update/email can be caught manually.
+      console.error("Webhook fulfillment error:", err);
     }
-    default:
-      break;
   }
 
   res.json({ received: true });

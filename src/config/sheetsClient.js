@@ -1,11 +1,12 @@
-// config/googleSheets.js
+// config/sheetsClient.js
 //
-// Generic Google Sheets client. Unlike the old googlesheets.js (which hardcoded
-// two tab names for leads/callbacks), this exposes just the raw `sheets` client
-// + spreadsheet id — services/sheetsDb.js builds generic read/find/update logic
-// on top of it, so ANY tab (Enrollments, DepositEnrollments,
-// SubscriptionEnrollments, your existing Consultations/RequestCallBack tabs...)
-// can be read and written by name.
+// Generic Google Sheets client used by services/sheetsDb.js.
+//
+// NOTE: this replaces the previous config/googleSheets.js. It is renamed
+// because "googleSheets.js" and your existing "googlesheets.js" (used by the
+// consultation / callback forms) differ only by letter case — on Windows and
+// macOS those two names are the SAME file and overwrite each other.
+// Leave your original googlesheets.js exactly as it is.
 
 const { google } = require("googleapis");
 
