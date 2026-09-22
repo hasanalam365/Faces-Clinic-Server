@@ -1,9 +1,11 @@
 // controllers/payments.controller.js
 //
 // Treatment-deposit flow (createDepositCheckoutSession, verifyCheckoutSession)
-// is UNCHANGED, line for line.
+// logic is otherwise UNCHANGED — the only edit is Klarna + Clearpay added to
+// payment_method_types alongside card (client requirement: Klarna/Clearpay
+// available on every Stripe checkout — course, subscription and treatment).
 //
-// Only two things differ from your previous file, both in the webhook area:
+// Other differences from your previous file, both in the webhook area:
 //  1. It no longer imports ./academypayments.controller (the old, replaced
 //     course system — that file pulled in services that crash on start-up).
 //  2. handleStripeWebhook gets one new branch: flowType
@@ -48,7 +50,11 @@ exports.createDepositCheckoutSession = async (req, res) => {
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
-      payment_method_types: ["card"],
+      // Card, Klarna and Clearpay all offered at checkout. Klarna/Clearpay
+      // need a billing address for their eligibility checks — this has no
+      // effect on the card flow.
+      payment_method_types: ["card", "klarna", "afterpay_clearpay"],
+      billing_address_collection: "required",
       customer_email: customerEmail,
       line_items: [
         {

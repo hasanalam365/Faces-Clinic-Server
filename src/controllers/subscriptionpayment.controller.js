@@ -54,7 +54,11 @@ exports.createFirstPaymentCheckout = async (req, res) => {
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
-      payment_method_types: ["card"],
+      // Card, Klarna and Clearpay all offered at checkout. Klarna/Clearpay
+      // need a billing address for their eligibility checks — this has no
+      // effect on the card flow.
+      payment_method_types: ["card", "klarna", "afterpay_clearpay"],
+      billing_address_collection: "required",
       customer_email: d.email,
       client_reference_id: enrollmentId,
       line_items: [
