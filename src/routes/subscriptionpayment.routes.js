@@ -16,7 +16,7 @@ const pollingLimiter = rateLimit({
 
 const checkoutLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 30,
+  max: process.env.NODE_ENV === "production" ? 30 : 500,
   message: { error: "Too many requests, please try again later." },
   standardHeaders: true,
   legacyHeaders: false,

@@ -26,7 +26,12 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions));
+// NOTE: app.options("*", ...) was removed — that bare "*" wildcard breaks
+// route registration on newer Express/path-to-regexp versions (throws or
+// silently fails to match), which meant OPTIONS preflight requests never
+// got CORS headers attached, causing the browser to block the real request.
+// app.use(cors(corsOptions)) above already handles OPTIONS preflight for
+// every route on its own, so this explicit line isn't needed.
 
 /* =======================
    RAW-BODY WEBHOOKS — MUST COME BEFORE express.json()
@@ -48,7 +53,11 @@ app.use(express.json());
 ======================= */
 const strictLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  // In dev this limiter is shared across 5 different route groups
+  // (enrollment, depositEnrollment, subscriptionEnrollment,
+  // identityVerification, gocardless) testing multiple flows back-to-back
+  // burns through a small shared budget fast. Keep production strict.
+  max: process.env.NODE_ENV === "production" ? 100 : 2000,
   message: { error: "Too many requests, please try again later." },
   standardHeaders: true,
   legacyHeaders: false,
@@ -88,10 +97,15 @@ app.use((req, res) => {
 
 /* =======================
    GLOBAL ERROR HANDLER
+   (explicitly re-applies CORS headers here too, so a thrown/uncaught
+   error never results in a response the browser can't read due to a
+   missing Access-Control-Allow-Origin header)
 ======================= */
 app.use((err, req, res, next) => {
   console.error(err.stack);
-  res.status(500).json({ error: "Internal server error" });
+  cors(corsOptions)(req, res, () => {
+    res.status(500).json({ error: "Internal server error" });
+  });
 });
 
 module.exports = app;
