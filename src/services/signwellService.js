@@ -4,22 +4,26 @@
 // (controllers/subscriptionenrollment.controller.js and
 // controllers/subscriptionAgreement.controller.js both call this).
 //
-// ⚠️ ASSUMPTION THAT NEEDS CHECKING AGAINST YOUR SIGNWELL ACCOUNT:
-// Creating a document FROM A TEMPLATE requires the recipient's
-// `placeholder_name` to exactly match the signer "role" name set up on your
-// template in the SignWell dashboard (Templates -> your template -> Roles).
-// "Recipient 1" is SignWell's usual default name for a single-signer
-// template, but if you named the role something else (e.g. "Student",
-// "Signer"), change PLACEHOLDER_NAME below to match — otherwise document
-// creation will fail with a "placeholder not found" style error.
+// Fixes vs the previous version (from SignWell's own error message):
+//  • placeholder_name was "Recipient 1" — your template's signer role is
+//    "student", so SignWell said: "placeholder_names do not have a recipient
+//    assigned: student". Now defaults to "student" (override with
+//    SIGNWELL_PLACEHOLDER_NAME in .env if you rename the role).
+//  • template_fields used api_ids "student_name" / "course_name", which do NOT
+//    exist on your template. Now the api_ids come from .env, and if they are
+//    not set the template_fields are simply not sent (document still gets
+//    created; the signer name/email are filled from `recipients`).
 //
-// Likewise, double-check the `api_id` values used in TEMPLATE_FIELDS against
-// the actual field names on your template (Templates -> Edit -> each text
-// field's "API ID").
+// .env (all optional):
+//   SIGNWELL_PLACEHOLDER_NAME=student
+//   SIGNWELL_FIELD_STUDENT_NAME=<API ID of the name text field on the template>
+//   SIGNWELL_FIELD_COURSE_NAME=<API ID of the course text field on the template>
 const axios = require("axios");
 const { SIGNWELL_API_KEY, TEMPLATE_ID, BASE_URL, TEST_MODE } = require("../config/signwell");
 
-const PLACEHOLDER_NAME = "Recipient 1"; // ⚠️ confirm against your template's role name
+const PLACEHOLDER_NAME = process.env.SIGNWELL_PLACEHOLDER_NAME || "student";
+const STUDENT_NAME_FIELD = process.env.SIGNWELL_FIELD_STUDENT_NAME || "";
+const COURSE_NAME_FIELD = process.env.SIGNWELL_FIELD_COURSE_NAME || "";
 
 const client = axios.create({
   baseURL: BASE_URL,
@@ -36,7 +40,16 @@ const client = axios.create({
  * student's first visit to the agreement step.
  */
 async function createAgreementDocument({ name, email, enrollmentId, courseName }) {
-  const res = await client.post("/document_templates/documents", {
+  const templateFields = [];
+  if (STUDENT_NAME_FIELD) templateFields.push({ api_id: STUDENT_NAME_FIELD, value: name });
+  if (COURSE_NAME_FIELD) templateFields.push({ api_id: COURSE_NAME_FIELD, value: courseName });
+
+  // NOTE: there is no backend "redirect after signing" field for embedded
+  // signing — SignWell's embedded mode is meant to be opened inside YOUR page
+  // via their SignWellEmbed JS widget (not a full-page navigation to
+  // signwell.com), and the redirect/next-step behaviour is handled there via
+  // the widget's `events.completed` callback. See Subscriptionagreementstatus.jsx.
+  const payload = {
     test_mode: TEST_MODE,
     template_id: TEMPLATE_ID,
     name: `${courseName} - Enrolment Agreement`,
@@ -51,11 +64,10 @@ async function createAgreementDocument({ name, email, enrollmentId, courseName }
         email,
       },
     ],
-    template_fields: [
-      { api_id: "student_name", value: name }, // ⚠️ confirm these api_id values
-      { api_id: "course_name", value: courseName }, //    against your template
-    ],
-  });
+  };
+  if (templateFields.length) payload.template_fields = templateFields;
+
+  const res = await client.post("/document_templates/documents", payload);
 
   const doc = res.data;
   const recipient = doc.recipients?.find((r) => r.id === "1") || doc.recipients?.[0];
