@@ -1,6 +1,7 @@
 // controllers/subscriptionEnrollment.controller.js
 // Step 1 of the subscription flow: collect details, create the row in
-// Sheets, and create the SignWell agreement document.
+// Sheets, and create the SignWell agreement document — using THIS course's
+// own SignWell template (course.signwellTemplateId, from config/courses.js).
 const { body, validationResult } = require("express-validator");
 const sanitizeHtml = require("sanitize-html");
 const courses = require("../config/courses");
@@ -79,6 +80,7 @@ exports.createAgreement = async (req, res) => {
         email: safeEmail,
         enrollmentId,
         courseName: course.name,
+        templateId: course.signwellTemplateId, // ← course-specific template
       });
       documentId = doc.documentId;
       signingUrl = doc.signingUrl;

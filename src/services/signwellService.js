@@ -4,15 +4,11 @@
 // (controllers/subscriptionenrollment.controller.js and
 // controllers/subscriptionAgreement.controller.js both call this).
 //
-// Fixes vs the previous version (from SignWell's own error message):
-//  • placeholder_name was "Recipient 1" — your template's signer role is
-//    "student", so SignWell said: "placeholder_names do not have a recipient
-//    assigned: student". Now defaults to "student" (override with
-//    SIGNWELL_PLACEHOLDER_NAME in .env if you rename the role).
-//  • template_fields used api_ids "student_name" / "course_name", which do NOT
-//    exist on your template. Now the api_ids come from .env, and if they are
-//    not set the template_fields are simply not sent (document still gets
-//    created; the signer name/email are filled from `recipients`).
+// Each course now has its OWN SignWell template (config/courses.js →
+// course.signwellTemplateId). createAgreementDocument() takes `templateId`
+// as a parameter and uses that; if the caller doesn't pass one (or a course
+// hasn't been given its own template yet), it falls back to the old global
+// SIGNWELL_TEMPLATE_ID so nothing breaks.
 //
 // .env (all optional):
 //   SIGNWELL_PLACEHOLDER_NAME=student
@@ -35,11 +31,23 @@ const client = axios.create({
 });
 
 /**
- * Creates (and sends) a SignWell document from the configured template, with
- * embedded signing enabled, and returns the embedded signing URL for the
- * student's first visit to the agreement step.
+ * Creates (and sends) a SignWell document from the course's own template,
+ * with embedded signing enabled, and returns the embedded signing URL for
+ * the student's first visit to the agreement step.
+ *
+ * @param {string} templateId - course-specific SignWell template ID
+ *   (config/courses.js → course.signwellTemplateId). Falls back to the
+ *   global SIGNWELL_TEMPLATE_ID if not supplied.
  */
-async function createAgreementDocument({ name, email, enrollmentId, courseName }) {
+async function createAgreementDocument({ name, email, enrollmentId, courseName, templateId }) {
+  const resolvedTemplateId = templateId || TEMPLATE_ID;
+
+  if (!resolvedTemplateId) {
+    throw new Error(
+      `No SignWell template configured for this course (enrollmentId: ${enrollmentId}, course: ${courseName})`
+    );
+  }
+
   const templateFields = [];
   if (STUDENT_NAME_FIELD) templateFields.push({ api_id: STUDENT_NAME_FIELD, value: name });
   if (COURSE_NAME_FIELD) templateFields.push({ api_id: COURSE_NAME_FIELD, value: courseName });
@@ -51,7 +59,7 @@ async function createAgreementDocument({ name, email, enrollmentId, courseName }
   // the widget's `events.completed` callback. See Subscriptionagreementstatus.jsx.
   const payload = {
     test_mode: TEST_MODE,
-    template_id: TEMPLATE_ID,
+    template_id: resolvedTemplateId,
     name: `${courseName} - Enrolment Agreement`,
     embedded_signing: true,
     draft: false,
