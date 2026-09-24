@@ -3,7 +3,7 @@ const router = express.Router();
 const rateLimit = require("express-rate-limit");
 const controller = require("../controllers/subscriptionPayment.controller");
 
-// The step pages poll the status endpoint every few seconds while waiting on
+
 // Stripe / SignWell, so it gets a generous limiter of its own. That's why
 // this router is mounted in app.js WITHOUT the shared strictLimiter.
 const pollingLimiter = rateLimit({
