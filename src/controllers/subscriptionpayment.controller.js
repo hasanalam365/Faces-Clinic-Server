@@ -1,10 +1,15 @@
 // controllers/subscriptionPayment.controller.js
 //
-// Subscription flow, step 4 (First Payment via Stripe) + the status endpoint
+// Subscription flow, step 4 (SetupFee via Stripe) + the status endpoint
 // every step page uses to know where the student is.
 //
 //   POST /subscription-enrollment/first-payment/create-checkout-session
 //   GET  /subscription-enrollment/status/:enrollmentId
+//
+// NOTE: "firstPaymentStatus" / "firstPaymentSessionId" as sheet column names
+// are kept as-is (they track the SetupFee Stripe payment) — only the AMOUNT
+// fields changed name (setupFee / monthlyFee), and the old "installments"
+// concept is gone entirely: the monthly fee is ongoing with no fixed count.
 const stripe = require("../config/stripe");
 const { findRowByField, updateRowByField } = require("../services/sheetsDb");
 const { markFirstPaymentPaid } = require("../services/enrollmentFulfillment");
@@ -38,19 +43,17 @@ exports.createFirstPaymentCheckout = async (req, res) => {
       return res.status(403).json({ message: "Please complete identity verification first." });
     }
     if (d.firstPaymentStatus === "Paid") {
-      return res.status(409).json({ message: "The first payment has already been made." });
+      return res.status(409).json({ message: "The setup fee has already been paid." });
     }
 
     // Amount comes from the row snapshotted at Step 1 — never from the client.
-    const amountPence = Math.round(parseFloat(d.firstPaymentAmount) * 100);
+    const amountPence = Math.round(parseFloat(d.setupFee) * 100);
     if (!Number.isFinite(amountPence) || amountPence <= 0) {
-      console.error("Invalid firstPaymentAmount on row", enrollmentId, d.firstPaymentAmount);
+      console.error("Invalid setupFee on row", enrollmentId, d.setupFee);
       return res.status(500).json({ message: "Could not start payment. Please contact us." });
     }
 
-    const monthly = Number(d.subscriptionAmount);
-    const installments = Number(d.installments);
-    const remaining = (monthly * installments).toFixed(2);
+    const monthly = Number(d.monthlyFee);
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
@@ -66,10 +69,10 @@ exports.createFirstPaymentCheckout = async (req, res) => {
           price_data: {
             currency: (d.currency || "GBP").toLowerCase(),
             product_data: {
-              name: `${d.courseName} — First Payment`,
-              description: `Up-front payment to secure your place. The remaining £${remaining} is collected as ${installments} monthly Direct Debit payments of £${monthly.toFixed(
+              name: `${d.courseName} — Setup Fee`,
+              description: `One-off setup fee to secure your place. After this, £${monthly.toFixed(
                 2
-              )}.`,
+              )} is charged monthly via Direct Debit for as long as you stay enrolled — cancel any time.`,
             },
             unit_amount: amountPence,
           },
@@ -93,7 +96,7 @@ exports.createFirstPaymentCheckout = async (req, res) => {
 
     return res.status(200).json({ url: session.url });
   } catch (err) {
-    console.error("Create first payment checkout error:", err);
+    console.error("Create setup fee checkout error:", err);
     return res.status(500).json({ message: "Could not start payment. Please try again." });
   }
 };
@@ -125,12 +128,11 @@ exports.getSubscriptionStatus = async (req, res) => {
       enrollmentId: d.enrollmentId,
       courseName: d.courseName,
       currency: d.currency || "GBP",
-      firstPaymentAmount: d.firstPaymentAmount,
-      monthlyAmount: d.subscriptionAmount,
-      installments: Number(d.installments) || 0,
+      setupFee: d.setupFee,
+      monthlyFee: d.monthlyFee,
       agreementSigned: isTrue(d.agreementSigned),
       identityVerified: isTrue(d.identityVerified),
-      firstPaymentPaid: d.firstPaymentStatus === "Paid",
+      setupFeePaid: d.firstPaymentStatus === "Paid",
       directDebitActive: Boolean(d.subscriptionId),
       nextStep: nextStepFor(d),
     });

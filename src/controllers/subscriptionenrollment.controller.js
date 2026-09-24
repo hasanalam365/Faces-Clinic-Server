@@ -2,6 +2,12 @@
 // Step 1 of the subscription flow: collect details, create the row in
 // Sheets, and create the SignWell agreement document — using THIS course's
 // own SignWell template (course.signwellTemplateId, from config/courses.js).
+//
+// Monthly-plan model: a one-off SetupFee (Stripe, step 4) followed by an
+// ongoing MonthlyFee (GoCardless Direct Debit, step 5) that has NO fixed
+// number of instalments — it keeps charging until cancelled. Both amounts
+// are snapshotted here, at signing time, so a later price change in
+// courses.js can't alter what an already-signed enrollment gets charged.
 const { body, validationResult } = require("express-validator");
 const sanitizeHtml = require("sanitize-html");
 const courses = require("../config/courses");
@@ -29,7 +35,7 @@ exports.createAgreement = async (req, res) => {
     const course = courses[courseId];
     if (!course) return res.status(400).json({ message: "Invalid course selected." });
 
-    const plan = course.subscription;
+    const plan = course.subscription; // { setupFee, monthlyFee } — pence
     const safeName = clean(name);
     const safeEmail = clean(email);
     const safePhone = clean(phone);
@@ -42,13 +48,11 @@ exports.createAgreement = async (req, res) => {
       phone: safePhone,
       courseId,
       courseName: course.name,
-      // Snapshot the plan NOW, at signing time. The first-payment checkout and
-      // the GoCardless subscription later read THESE stored values, not
-      // courses.js again, so a later price change can't alter what an
-      // already-signed enrollment gets charged.
-      subscriptionAmount: pounds(plan.monthlyAmount), // monthly Direct Debit
-      firstPaymentAmount: pounds(plan.firstPayment), // Stripe, step 4
-      installments: String(plan.installments),
+      // Snapshot NOW, at signing time — the first-payment checkout and the
+      // GoCardless subscription later read THESE stored values, not
+      // courses.js again.
+      setupFee: pounds(plan.setupFee), // Stripe, step 4 (one-off)
+      monthlyFee: pounds(plan.monthlyFee), // GoCardless, step 5 (ongoing, no end date)
       currency: course.currency,
       status: "Pending Signature",
       agreementSigned: "false",
@@ -60,7 +64,7 @@ exports.createAgreement = async (req, res) => {
       identityProofNumber: "",
       identityFrontUrl: "",
       identityBackUrl: "",
-      firstPaymentStatus: "Pending",
+      firstPaymentStatus: "Pending", // tracks the SetupFee Stripe payment
       firstPaymentSessionId: "",
       gcRedirectFlowId: "",
       mandateId: "",
@@ -80,7 +84,7 @@ exports.createAgreement = async (req, res) => {
         email: safeEmail,
         enrollmentId,
         courseName: course.name,
-        templateId: course.signwellTemplateId, // ← course-specific template
+        templateId: course.signwellTemplateId, // course-specific template
       });
       documentId = doc.documentId;
       signingUrl = doc.signingUrl;
@@ -106,9 +110,8 @@ exports.createAgreement = async (req, res) => {
       enrollmentId,
       signingUrl,
       courseName: course.name,
-      subscriptionAmount: pounds(plan.monthlyAmount),
-      firstPaymentAmount: pounds(plan.firstPayment),
-      installments: plan.installments,
+      setupFee: pounds(plan.setupFee),
+      monthlyFee: pounds(plan.monthlyFee),
     });
   } catch (error) {
     console.error("Create subscription agreement error:", error);

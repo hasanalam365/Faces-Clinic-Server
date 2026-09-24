@@ -4,7 +4,15 @@
 // RedirectFlow API.
 //   POST /gc/create-redirect-flow  -> send the student to GC's hosted page
 //   POST /gc/complete-flow         -> exchange the completed flow for a mandate
-//   POST /gc/create-subscription   -> schedule the monthly instalments
+//   POST /gc/create-subscription   -> start the monthly Direct Debit
+//
+// IMPORTANT — open-ended monthly fee: createSubscription below does NOT pass
+// a `count` to GoCardless. Per GoCardless's API, omitting `count` (and
+// `end_date`) makes the subscription continue indefinitely, charging
+// `amount` every month, until it's explicitly cancelled (by the student
+// asking, or an admin action). This is intentional — the monthly fee is an
+// ongoing access fee, not a fixed number of instalments that pays off the
+// course price.
 //
 // The enrollmentId doubles as the GoCardless session_token everywhere (see
 // utils/generateId.js), so nothing extra needs to be stored to complete the
@@ -26,7 +34,7 @@ exports.createGoCardlessRedirectFlow = async (req, res) => {
 
     const d = found.data;
     if (d.firstPaymentStatus !== "Paid") {
-      return res.status(403).json({ message: "Please complete your first payment first." });
+      return res.status(403).json({ message: "Please complete your setup fee payment first." });
     }
     if (d.mandateId) {
       return res.status(409).json({ message: "Direct Debit is already set up." });
@@ -111,24 +119,21 @@ exports.createSubscription = async (req, res) => {
       return res.status(200).json({ success: true, subscriptionId: d.subscriptionId, alreadyCreated: true });
     }
 
-    const monthlyAmountPence = Math.round(parseFloat(d.subscriptionAmount) * 100);
-    const installments = Number(d.installments);
-    if (!Number.isFinite(monthlyAmountPence) || monthlyAmountPence <= 0 || !installments) {
-      console.error(
-        "Invalid subscription amount/installments on row",
-        enrollmentId,
-        d.subscriptionAmount,
-        d.installments
-      );
+    const monthlyAmountPence = Math.round(parseFloat(d.monthlyFee) * 100);
+    if (!Number.isFinite(monthlyAmountPence) || monthlyAmountPence <= 0) {
+      console.error("Invalid monthlyFee on row", enrollmentId, d.monthlyFee);
       return res.status(500).json({ message: "Could not start Direct Debit. Please contact us." });
     }
 
     const subscription = await gocardless.subscriptions.create({
       amount: monthlyAmountPence,
       currency: (d.currency || "GBP").toUpperCase(),
-      name: `${d.courseName} — Monthly Payment`,
+      name: `${d.courseName} — Monthly Fee`,
       interval_unit: "monthly",
-      count: installments,
+      // NO `count` and NO `end_date` here on purpose — this makes the
+      // subscription open-ended: GoCardless keeps charging `amount` every
+      // month until the mandate/subscription is cancelled. Do not add
+      // `count` back unless you actually want a fixed payoff plan again.
       links: { mandate: d.mandateId },
     });
 
@@ -145,9 +150,8 @@ exports.createSubscription = async (req, res) => {
       email: d.email,
       phone: d.phone,
       courseName: d.courseName,
-      firstPaymentAmount: d.firstPaymentAmount,
-      monthlyAmount: d.subscriptionAmount,
-      installments,
+      setupFee: d.setupFee,
+      monthlyFee: d.monthlyFee,
       mandateId: d.mandateId,
       subscriptionId: subscription.id,
     }).catch((e) => console.error("Subscription active email error:", e.message));

@@ -8,6 +8,10 @@
 // "Paid" and sends the confirmation emails — NOT the verify-session endpoints,
 // which only READ status. That keeps emails from firing twice if the customer
 // reloads the success page.
+//
+// For the monthly plan: markFirstPaymentPaid() below checks the Stripe
+// session against the enrolment's stored SETUP FEE (not a "first
+// instalment" — the monthly fee afterwards is a separate, ongoing charge).
 
 const { findRowByField, updateRowByField } = require("./sheetsDb");
 const { sendEnrollmentConfirmationEmails } = require("./emailService");
@@ -50,7 +54,7 @@ async function fulfillEnrollment(session, tabName) {
 }
 
 /**
- * Marks the subscription's first (Stripe) payment as received.
+ * Marks the monthly plan's SetupFee (Stripe, one-off) as received.
  *
  * Idempotent and email-free, so it is safe to call from BOTH the Stripe
  * webhook and the status endpoint (which reconciles with Stripe if the
@@ -62,14 +66,14 @@ async function fulfillEnrollment(session, tabName) {
 async function markFirstPaymentPaid(session) {
   const enrollmentId = session.metadata?.enrollmentId;
   if (!enrollmentId) {
-    console.error("First payment: missing enrollmentId in session metadata", session.id);
+    console.error("Setup fee: missing enrollmentId in session metadata", session.id);
     return null;
   }
   if (session.payment_status !== "paid") return null;
 
   const found = await findRowByField(SUBSCRIPTION_TAB, "enrollmentId", enrollmentId);
   if (!found) {
-    console.error("First payment: no row found for enrollmentId", enrollmentId);
+    console.error("Setup fee: no row found for enrollmentId", enrollmentId);
     return null;
   }
 
@@ -77,10 +81,10 @@ async function markFirstPaymentPaid(session) {
   if (row.firstPaymentStatus === "Paid") return row;
 
   // Never trust a "paid" session for the wrong amount.
-  const expectedPence = Math.round(parseFloat(row.firstPaymentAmount) * 100);
+  const expectedPence = Math.round(parseFloat(row.setupFee) * 100);
   if (session.amount_total !== expectedPence) {
     console.error(
-      `First payment amount mismatch for ${enrollmentId}: Stripe took ${session.amount_total}p, expected ${expectedPence}p (session ${session.id}). NOT marked paid — check manually.`
+      `Setup fee amount mismatch for ${enrollmentId}: Stripe took ${session.amount_total}p, expected ${expectedPence}p (session ${session.id}). NOT marked paid — check manually.`
     );
     return null;
   }
@@ -88,7 +92,7 @@ async function markFirstPaymentPaid(session) {
   const changes = {
     firstPaymentStatus: "Paid",
     firstPaymentSessionId: session.id,
-    status: "First Payment Received",
+    status: "Setup Fee Received",
     updatedAt: new Date().toISOString(),
   };
   await updateRowByField(SUBSCRIPTION_TAB, "enrollmentId", enrollmentId, changes);

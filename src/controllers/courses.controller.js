@@ -10,13 +10,9 @@ const toDisplay = (id, c) => ({
   fullPrice: pounds(c.fullPrice),
   depositAmount: pounds(c.depositAmount),
   remainingAfterDeposit: pounds(c.remainingAfterDeposit),
-  // Monthly Direct Debit amount (kept for older code)
-  subscriptionAmount: pounds(c.subscription.monthlyAmount),
   subscription: {
-    firstPayment: pounds(c.subscription.firstPayment),
-    monthlyAmount: pounds(c.subscription.monthlyAmount),
-    installments: c.subscription.installments,
-    totalPayable: pounds(c.subscription.totalPayable),
+    setupFee: pounds(c.subscription.setupFee), // one-off, via Stripe
+    monthlyFee: pounds(c.subscription.monthlyFee), // ongoing, via GoCardless — no end date
   },
 });
 
