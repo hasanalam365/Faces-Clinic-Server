@@ -124,8 +124,8 @@ function buildCourse(id, def) {
     depositAmount,
     remainingAfterDeposit,
     subscription: {
-      setupFee: def.setupFee, // one-off, via Stripe
-      monthlyFee: def.monthlyFee, // ongoing, via GoCardless Direct Debit — no end date
+      setupFee: def.setupFee, 
+      monthlyFee: def.monthlyFee, 
     },
     currency: "GBP",
     signwellTemplateId: def.signwellTemplateId || process.env.SIGNWELL_TEMPLATE_ID,
