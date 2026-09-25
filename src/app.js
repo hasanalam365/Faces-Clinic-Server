@@ -79,7 +79,8 @@ app.use("/", strictLimiter, require("./routes/subscriptionEnrollment.routes"));
 app.use("/", strictLimiter, require("./routes/identityVerification.routes"));
 app.use("/", strictLimiter, require("./routes/gocardless.routes"));
 app.use("/", require("./routes/subscriptionAgreement.routes")); // has its own pollingLimiter on the GET route
-app.use("/", require("./routes/subscriptionPayment.routes")); // NEW — has its own limiters (status is polled)
+app.use("/", require("./routes/subscriptionPayment.routes")); // has its own pollingLimiter on the GET route
+
 
 /* =======================
    ROOT

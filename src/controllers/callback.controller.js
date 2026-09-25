@@ -1,5 +1,5 @@
 const transporter = require("../config/mailer");
-const { appendRow, SHEET_NAME2 } = require("../config/googlesheets");
+const { insertRow } = require("../services/sheetsDb");
 
 const requestCallback = async (req, res) => {
   try {
@@ -352,21 +352,22 @@ Thank you for choosing us.
 `,
     });
 
-    // ===== 3) Add row -> GOOGLE SHEET (RequestCallBack tab, via GOOGLE_SHEET_NAME2) =====
+    // ===== 3) Add row -> GOOGLE SHEET (RequestCallBack tab) =====
+    // Uses the same generic sheetsDb layer as Enrollments/Deposit/Subscription.
+    // insertRow maps these keys to row-1 headers by NAME, so column order in
+    // the sheet doesn't matter — only the header text has to match exactly:
+    // Name | Email | Phone Number | Interested Time | Message | Date | Status
+    // (this also fixes the old bug where Message/timeSlot landed in swapped columns)
     const timestamp = new Date().toLocaleString("en-GB", { timeZone: "Europe/London" });
-    const sheetAppend = appendRow(
-      [
-        fullName,
-        email,
-        `'${phone}`, // ← leading apostrophe forces Google Sheets to store this as TEXT,
-                     //   otherwise a value starting with "+" is parsed as a formula (#ERROR!)
-        message || "",
-        timeSlot || "Not specified",
-        timestamp,
-        "Pending",
-      ],
-      SHEET_NAME2
-    );
+    const sheetAppend = insertRow("RequestCallBack", {
+      Name: fullName,
+      Email: email,
+      "Phone Number": phone, // RAW input option stores this exactly as-is, no apostrophe trick needed
+      "Interested Time": timeSlot || "Not specified",
+      Message: message || "",
+      Date: timestamp,
+      Status: "Pending",
+    });
 
     // Run email + sheet writes together. Use allSettled so that if the
     // sheet write fails, the emails still go through (and the reverse) —
