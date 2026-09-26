@@ -34,7 +34,7 @@ const CATALOGUE = {
   "foundation-anti-wrinkle": {
     name: "Foundation Anti-Wrinkle Course",
     fullPrice: 85000, // £850
-    setupFee: 25000, // £250
+    setupFee: 15000, // £250
     monthlyFee: 5000, // £50/month
     signwellTemplateId:
       process.env.SIGNWELL_TEMPLATE_ANTI_WRINKLE || process.env.SIGNWELL_TEMPLATE_ID,
@@ -49,7 +49,7 @@ const CATALOGUE = {
   },
   "liquid-bbl-2days-with-ultrasound": {
     name: "Liquid BBL – 2 Days Course (With Ultrasound)",
-    fullPrice: 259900, // £2,599
+    fullPrice: 240000, 
     setupFee: 25000, // £250
     monthlyFee: 10000, // £100/month
     signwellTemplateId:
@@ -57,7 +57,7 @@ const CATALOGUE = {
   },
   "liquid-bbl-2days-without-ultrasound": {
     name: "Liquid BBL – 2 Days Course (Without Ultrasound)",
-    fullPrice: 259900, // £2,599
+    fullPrice: 160000, // £2,599
     setupFee: 25000, // £250
     monthlyFee: 10000, // £100/month
     signwellTemplateId:
@@ -65,7 +65,7 @@ const CATALOGUE = {
   },
   "advanced-filler-anti-wrinkle": {
     name: "Advanced Dermal Filler & Anti-Wrinkle",
-    fullPrice: 120000, // £1,200 — site shows £1,200–£1,499; Stripe needs one number, CONFIRM
+    fullPrice: 159900, // £1,200 — site shows £1,200–£1,499; Stripe needs one number, CONFIRM
     setupFee: 25000, // £250
     monthlyFee: 10000, // £100/month
     signwellTemplateId:

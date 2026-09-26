@@ -18,6 +18,7 @@ const corsOptions = {
   origin: [
     "http://localhost:5173",
     "https://facesonfaces-academy.vercel.app",
+    "https://www.facesonfaces.com",
     process.env.CLIENT_URL,
   ].filter(Boolean),
   credentials: true,
