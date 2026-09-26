@@ -1,28 +1,48 @@
 // controllers/payments.controller.js
 //
 // Treatment-deposit flow (createDepositCheckoutSession, verifyCheckoutSession)
-// logic is otherwise UNCHANGED — the only edit is Klarna + Clearpay added to
-// payment_method_types alongside card (client requirement: Klarna/Clearpay
-// available on every Stripe checkout — course, subscription and treatment).
+// logic is otherwise UNCHANGED — the edits here are:
+//  1. Klarna + Clearpay added to payment_method_types alongside card (client
+//     requirement: Klarna/Clearpay available on every Stripe checkout —
+//     course, subscription and treatment).
+//  2. Google Sheets logging for CLINICAL TREATMENT deposits only, via the
+//     same generic sheetsDb layer Enrollments/DepositEnrollments already use
+//     — a brand new "TreatmentBookingsPayment" tab, so nothing shared is touched:
+//       - createDepositCheckoutSession inserts a "Pending" row the moment
+//         the Stripe Checkout Session is created (mirrors how
+//         Enrollments/DepositEnrollments rows appear as "Pending" first).
+//       - handleStripeWebhook's treatment-deposit fallback branch updates
+//         that same row to "Paid" once Stripe confirms payment.
+//
+// IMPORTANT — add a tab named exactly "TreatmentBookingsPayment" to your Google
+// Sheet with this header row (row 1), in any column order you like — the
+// generic sheetsDb layer maps by header NAME, not position:
+//   bookingId | name | email | phone | treatmentId | treatmentName | amount
+//   | remainingBalance | preferredDate | paymentStatus | stripeSessionId
+//   | createdAt | updatedAt
 //
 // Other differences from your previous file, both in the webhook area:
 //  1. It no longer imports ./academypayments.controller (the old, replaced
 //     course system — that file pulled in services that crash on start-up).
 //  2. handleStripeWebhook gets one new branch: flowType
 //     "subscription_first_payment" (the £ first payment of the monthly plan).
-//     The "enrollment" / "deposit_enrollment" branches and the treatment
-//     fallback behave exactly as before.
+//     The "enrollment" / "deposit_enrollment" branches behave exactly as
+//     before — completely separate from the treatment-deposit branch below.
 const stripe = require("../config/stripe");
 const {
   fulfillEnrollment,
   fulfillSubscriptionFirstPayment,
 } = require("../services/enrollmentFulfillment");
+const { insertRow, updateRowByField } = require("../services/sheetsDb");
+const { generateId } = require("../utils/generateId");
 
 const DEPOSIT_PERCENTAGE = 0.2; // 20% deposit at booking, rest paid on the day
+const TREATMENT_SHEET = "TreatmentBookingsPayment";
 
 /**
  * POST /payments/create-checkout-session
- * Treatment-deposit flow — unchanged.
+ * Treatment-deposit flow — payment logic unchanged, now also logs a
+ * "Pending" row to the TreatmentBookingsPayment sheet.
  */
 exports.createDepositCheckoutSession = async (req, res) => {
   try {
@@ -46,7 +66,9 @@ exports.createDepositCheckoutSession = async (req, res) => {
     }
 
     const depositAmountPence = Math.round(total * DEPOSIT_PERCENTAGE * 100);
+    const depositAmount = (depositAmountPence / 100).toFixed(2);
     const remainingBalance = (total - total * DEPOSIT_PERCENTAGE).toFixed(2);
+    const bookingId = generateId();
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
@@ -71,10 +93,11 @@ exports.createDepositCheckoutSession = async (req, res) => {
       ],
       metadata: {
         bookingType: "treatment_deposit",
+        bookingId,
         treatmentId: treatmentId || "",
         treatmentName,
         totalPrice: total.toFixed(2),
-        depositPaid: (depositAmountPence / 100).toFixed(2),
+        depositPaid: depositAmount,
         remainingBalance,
         customerName,
         customerPhone,
@@ -83,6 +106,30 @@ exports.createDepositCheckoutSession = async (req, res) => {
       success_url: `${process.env.CLIENT_URL}/book-consultation?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.CLIENT_URL}/book-consultation`,
     });
+
+    // Log the booking as "Pending" as soon as checkout is created — the
+    // webhook flips it to "Paid" once Stripe confirms. A sheet-write failure
+    // here must never block the customer from reaching Stripe checkout.
+    try {
+      const timestamp = new Date().toISOString();
+      await insertRow(TREATMENT_SHEET, {
+        bookingId,
+        name: customerName,
+        email: customerEmail,
+        phone: customerPhone,
+        treatmentId: treatmentId || "",
+        treatmentName,
+        amount: depositAmount,
+        remainingBalance,
+        preferredDate: preferredDate || "Not specified",
+        paymentStatus: "Pending",
+        stripeSessionId: session.id,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    } catch (sheetErr) {
+      console.error("⚠️ TreatmentBookingsPayment sheet insert failed:", sheetErr.message);
+    }
 
     return res.status(200).json({ url: session.url, id: session.id });
   } catch (err) {
@@ -117,7 +164,7 @@ exports.verifyCheckoutSession = async (req, res) => {
  * POST /payments/webhook
  * Shared Stripe webhook for ALL Checkout Session flows in the app.
  * Dispatches on metadata.flowType (course flows) — anything else is the
- * original treatment-deposit behaviour.
+ * original treatment-deposit behaviour, now also updating TreatmentBookingsPayment.
  * Must be mounted with express.raw() BEFORE express.json() in app.js.
  */
 exports.handleStripeWebhook = async (req, res) => {
@@ -143,7 +190,7 @@ exports.handleStripeWebhook = async (req, res) => {
       } else if (flowType === "subscription_first_payment") {
         await fulfillSubscriptionFirstPayment(session);
       } else {
-        // Original treatment-deposit behaviour — unchanged.
+        // Original treatment-deposit behaviour — unchanged, plus the sheet update.
         console.log("Deposit paid:", {
           treatment: session.metadata.treatmentName,
           customer: session.metadata.customerName,
@@ -153,6 +200,15 @@ exports.handleStripeWebhook = async (req, res) => {
           remainingBalance: session.metadata.remainingBalance,
           preferredDate: session.metadata.preferredDate,
         });
+
+        try {
+          await updateRowByField(TREATMENT_SHEET, "stripeSessionId", session.id, {
+            paymentStatus: "Paid",
+            updatedAt: new Date().toISOString(),
+          });
+        } catch (sheetErr) {
+          console.error("⚠️ TreatmentBookingsPayment sheet update failed:", sheetErr.message);
+        }
       }
     } catch (err) {
       // Acknowledge receipt regardless, to avoid a Stripe retry storm — but
