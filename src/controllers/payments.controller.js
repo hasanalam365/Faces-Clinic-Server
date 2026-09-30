@@ -1,33 +1,29 @@
 // controllers/payments.controller.js
 //
-// Treatment-deposit flow (createDepositCheckoutSession, verifyCheckoutSession)
-// logic is otherwise UNCHANGED — the edits here are:
-//  1. Klarna + Clearpay added to payment_method_types alongside card (client
-//     requirement: Klarna/Clearpay available on every Stripe checkout —
-//     course, subscription and treatment).
-//  2. Google Sheets logging for CLINICAL TREATMENT deposits only, via the
-//     same generic sheetsDb layer Enrollments/DepositEnrollments already use
-//     — a brand new "TreatmentBookingsPayment" tab, so nothing shared is touched:
-//       - createDepositCheckoutSession inserts a "Pending" row the moment
-//         the Stripe Checkout Session is created (mirrors how
-//         Enrollments/DepositEnrollments rows appear as "Pending" first).
-//       - handleStripeWebhook's treatment-deposit fallback branch updates
-//         that same row to "Paid" once Stripe confirms payment.
+// Treatment payment flow (createDepositCheckoutSession, verifyCheckoutSession).
 //
-// IMPORTANT — add a tab named exactly "TreatmentBookingsPayment" to your Google
-// Sheet with this header row (row 1), in any column order you like — the
-// generic sheetsDb layer maps by header NAME, not position:
+// NEW: customer can choose between two payment options:
+//   - "deposit" : 20% of the (discounted) total now, rest on the day (default)
+//   - "full"    : 100% of the (discounted) total now, nothing due on the day
+//
+// Klarna + Clearpay are offered alongside card on every Stripe checkout.
+//
+// Google Sheets logging for CLINICAL TREATMENT bookings only, via the generic
+// sheetsDb layer — tab "TreatmentBookingsPayment":
+//   - createDepositCheckoutSession inserts a "Pending" row
+//   - handleStripeWebhook's treatment branch updates that row to "Paid"
+//
+// IMPORTANT — the "TreatmentBookingsPayment" tab needs this header row (row 1),
+// in any order (sheetsDb maps by header NAME, not position):
 //   bookingId | name | email | phone | treatmentId | treatmentName | amount
 //   | remainingBalance | preferredDate | paymentStatus | stripeSessionId
-//   | createdAt | updatedAt
+//   | createdAt | updatedAt | originalPrice | discountPercent | discountedPrice
+//   | paymentType
+// (paymentType is NEW — add it as an extra header)
 //
-// Other differences from your previous file, both in the webhook area:
-//  1. It no longer imports ./academypayments.controller (the old, replaced
-//     course system — that file pulled in services that crash on start-up).
-//  2. handleStripeWebhook gets one new branch: flowType
-//     "subscription_first_payment" (the £ first payment of the monthly plan).
-//     The "enrollment" / "deposit_enrollment" branches behave exactly as
-//     before — completely separate from the treatment-deposit branch below.
+// The webhook does not import ./academypayments.controller (old course system).
+// handleStripeWebhook handles flowType "subscription_first_payment"; the
+// "enrollment" / "deposit_enrollment" branches are unchanged.
 const stripe = require("../config/stripe");
 const {
   fulfillEnrollment,
@@ -39,10 +35,17 @@ const { generateId } = require("../utils/generateId");
 const DEPOSIT_PERCENTAGE = 0.2; // 20% deposit at booking, rest paid on the day
 const TREATMENT_SHEET = "TreatmentBookingsPayment";
 
+// October offer — 20% off every treatment. Keep in sync with
+// OFFER_PERCENT / OFFER_END in the frontend ClinicalTreatments.jsx.
+// Enforced HERE so the discount can't be kept or faked after the offer ends.
+const OFFER_PERCENT = 20;
+const OFFER_END = new Date("2026-10-31T23:59:59Z");
+const isOfferActive = () => new Date() <= OFFER_END;
+
 /**
  * POST /payments/create-checkout-session
- * Treatment-deposit flow — payment logic unchanged, now also logs a
- * "Pending" row to the TreatmentBookingsPayment sheet.
+ * Treatment payment flow — supports "deposit" (20% now) or "full" (100% now).
+ * Logs a "Pending" row to the TreatmentBookingsPayment sheet.
  */
 exports.createDepositCheckoutSession = async (req, res) => {
   try {
@@ -50,24 +53,52 @@ exports.createDepositCheckoutSession = async (req, res) => {
       treatmentId,
       treatmentName,
       totalPrice,
+      originalPrice,
       customerName,
       customerEmail,
       customerPhone,
       preferredDate,
     } = req.body;
 
+    // NEW: "deposit" (20% now, rest on the day) or "full" (pay everything now).
+    // Anything other than "full" falls back to "deposit" (previous behaviour).
+    const paymentOption = req.body.paymentOption === "full" ? "full" : "deposit";
+    const isFullPayment = paymentOption === "full";
+
     if (!treatmentName || !totalPrice || !customerName || !customerEmail || !customerPhone) {
       return res.status(400).json({ error: "Missing required booking details." });
     }
 
-    const total = Number(totalPrice);
+    let total = Number(totalPrice);
     if (!Number.isFinite(total) || total <= 0) {
       return res.status(400).json({ error: "Invalid treatment price." });
     }
 
-    const depositAmountPence = Math.round(total * DEPOSIT_PERCENTAGE * 100);
-    const depositAmount = (depositAmountPence / 100).toFixed(2);
-    const remainingBalance = (total - total * DEPOSIT_PERCENTAGE).toFixed(2);
+    // October offer: if the frontend sent the regular price, work out the
+    // discounted total here on the server (only while the offer is live).
+    // The deposit / full payment below is then taken from the DISCOUNTED total.
+    let originalTotal = total;
+    let discountPercent = 0;
+    const regular = Number(originalPrice);
+    if (Number.isFinite(regular) && regular > 0) {
+      originalTotal = regular;
+      if (isOfferActive()) {
+        discountPercent = OFFER_PERCENT;
+        total = Math.round(regular * (100 - OFFER_PERCENT)) / 100;
+      } else {
+        total = regular;
+      }
+    }
+
+    // Full payment = whole (already discounted) total now, £0 left.
+    // Deposit = 20% of the (discounted) total now, rest on the day.
+    const depositAmountPence = isFullPayment
+      ? Math.round(total * 100)
+      : Math.round(total * DEPOSIT_PERCENTAGE * 100);
+    const depositAmount = (depositAmountPence / 100).toFixed(2); // amount charged today
+    const remainingBalance = isFullPayment
+      ? "0.00"
+      : (total - total * DEPOSIT_PERCENTAGE).toFixed(2);
     const bookingId = generateId();
 
     const session = await stripe.checkout.sessions.create({
@@ -83,8 +114,16 @@ exports.createDepositCheckoutSession = async (req, res) => {
           price_data: {
             currency: "gbp",
             product_data: {
-              name: `${treatmentName} — 20% Booking Deposit`,
-              description: `Deposit to secure your appointment. Remaining balance of £${remainingBalance} is due on the day of treatment.`,
+              name: isFullPayment
+                ? `${treatmentName} — Full Payment`
+                : `${treatmentName} — 20% Booking Deposit`,
+              description:
+                (isFullPayment
+                  ? `Full payment for your treatment. Nothing further is due on the day.`
+                  : `Deposit to secure your appointment. Remaining balance of £${remainingBalance} is due on the day of treatment.`) +
+                (discountPercent
+                  ? ` October offer applied: ${discountPercent}% off (£${originalTotal.toFixed(2)} → £${total.toFixed(2)}).`
+                  : ""),
             },
             unit_amount: depositAmountPence,
           },
@@ -97,8 +136,11 @@ exports.createDepositCheckoutSession = async (req, res) => {
         treatmentId: treatmentId || "",
         treatmentName,
         totalPrice: total.toFixed(2),
+        originalPrice: originalTotal.toFixed(2),
+        discountPercent: String(discountPercent),
         depositPaid: depositAmount,
         remainingBalance,
+        paymentOption,
         customerName,
         customerPhone,
         preferredDate: preferredDate || "",
@@ -121,8 +163,12 @@ exports.createDepositCheckoutSession = async (req, res) => {
         treatmentName,
         amount: depositAmount,
         remainingBalance,
+        originalPrice: originalTotal.toFixed(2),
+        discountPercent: `${discountPercent}%`,
+        discountedPrice: total.toFixed(2),
         preferredDate: preferredDate || "Not specified",
         paymentStatus: "Pending",
+        paymentType: isFullPayment ? "Full Payment" : "20% Deposit",
         stripeSessionId: session.id,
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -149,6 +195,7 @@ exports.verifyCheckoutSession = async (req, res) => {
         treatmentName: session.metadata.treatmentName,
         depositPaid: session.metadata.depositPaid,
         remainingBalance: session.metadata.remainingBalance,
+        paymentOption: session.metadata.paymentOption || "deposit", // NEW
         customerEmail: session.customer_email,
       });
     }
@@ -164,7 +211,7 @@ exports.verifyCheckoutSession = async (req, res) => {
  * POST /payments/webhook
  * Shared Stripe webhook for ALL Checkout Session flows in the app.
  * Dispatches on metadata.flowType (course flows) — anything else is the
- * original treatment-deposit behaviour, now also updating TreatmentBookingsPayment.
+ * treatment payment behaviour, which also updates TreatmentBookingsPayment.
  * Must be mounted with express.raw() BEFORE express.json() in app.js.
  */
 exports.handleStripeWebhook = async (req, res) => {
@@ -190,13 +237,14 @@ exports.handleStripeWebhook = async (req, res) => {
       } else if (flowType === "subscription_first_payment") {
         await fulfillSubscriptionFirstPayment(session);
       } else {
-        // Original treatment-deposit behaviour — unchanged, plus the sheet update.
-        console.log("Deposit paid:", {
+        // Treatment payment (deposit or full) — unchanged, plus the sheet update.
+        console.log("Treatment payment received:", {
           treatment: session.metadata.treatmentName,
           customer: session.metadata.customerName,
           phone: session.metadata.customerPhone,
           email: session.customer_email,
-          depositPaid: session.metadata.depositPaid,
+          paymentOption: session.metadata.paymentOption || "deposit",
+          paid: session.metadata.depositPaid,
           remainingBalance: session.metadata.remainingBalance,
           preferredDate: session.metadata.preferredDate,
         });

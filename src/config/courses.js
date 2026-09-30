@@ -25,7 +25,7 @@ const DEPOSIT_PERCENT = 20;
 const CATALOGUE = {
   "foundation-14-certificate": {
     name: "14 Certificate Foundation Course",
-    fullPrice: 159900, // £1,599
+    fullPrice: 109900, // £1,099
     setupFee: 25000, // £250
     monthlyFee: 10000, // £100/month
     signwellTemplateId:
@@ -65,7 +65,7 @@ const CATALOGUE = {
   },
   "advanced-filler-anti-wrinkle": {
     name: "Advanced Dermal Filler & Anti-Wrinkle",
-    fullPrice: 159900, // £1,200 — site shows £1,200–£1,499; Stripe needs one number, CONFIRM
+    fullPrice: 110000, // £1,200 — site shows £1,200–£1,499; Stripe needs one number, CONFIRM
     setupFee: 25000, // £250
     monthlyFee: 10000, // £100/month
     signwellTemplateId:
@@ -89,7 +89,7 @@ const CATALOGUE = {
   },
   "iv-drip-vitamin-injections": {
     name: "IV Drip and Vitamin Injections Training Course",
-    fullPrice: 99900, // £999
+    fullPrice: 70000, // £999
     setupFee: 15000, // £150
     monthlyFee: 5000, // £50/month
     signwellTemplateId:
@@ -97,7 +97,7 @@ const CATALOGUE = {
   },
   "phlebotomy-prp-hair": {
     name: "Phlebotomy, PRP, and PRP Hair Training Course",
-    fullPrice: 110000, // £1,100
+    fullPrice: 90000, // £1,100
     setupFee: 15000, // £150
     monthlyFee: 5000, // £50/month
     signwellTemplateId:
