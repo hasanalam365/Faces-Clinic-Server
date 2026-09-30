@@ -31,9 +31,14 @@ const {
 } = require("../services/enrollmentFulfillment");
 const { insertRow, updateRowByField } = require("../services/sheetsDb");
 const { generateId } = require("../utils/generateId");
+const { sendTreatmentBookingEmails } = require("../services/emailService");
 
 const DEPOSIT_PERCENTAGE = 0.2; // 20% deposit at booking, rest paid on the day
 const TREATMENT_SHEET = "TreatmentBookingsPayment";
+
+// Clinic locations a customer can book at. Keep in sync with LOCATIONS in the
+// frontend BookTreatment.jsx.
+const TREATMENT_LOCATIONS = ["Upminster", "Edinburgh", "Newton Abbot"];
 
 // October offer — 20% off every treatment. Keep in sync with
 // OFFER_PERCENT / OFFER_END in the frontend ClinicalTreatments.jsx.
@@ -41,6 +46,59 @@ const TREATMENT_SHEET = "TreatmentBookingsPayment";
 const OFFER_PERCENT = 20;
 const OFFER_END = new Date("2026-10-31T23:59:59Z");
 const isOfferActive = () => new Date() <= OFFER_END;
+
+// Sessions we've already emailed about (guards against the webhook and the
+// verify endpoint both firing the emails for the same payment).
+const emailedSessions = new Set();
+
+/**
+ * Marks the treatment booking "Paid" in the sheet and sends the confirmation
+ * emails (customer + admin) exactly once. Called from BOTH the Stripe webhook
+ * and verifyCheckoutSession, so emails still go out if the webhook never
+ * reaches the server (e.g. local dev without `stripe listen`).
+ */
+async function finalizeTreatmentPayment(session) {
+  const md = session.metadata || {};
+
+  let alreadyPaid = false;
+  try {
+    const previous = await updateRowByField(TREATMENT_SHEET, "stripeSessionId", session.id, {
+      paymentStatus: "Paid",
+      updatedAt: new Date().toISOString(),
+    });
+    alreadyPaid = String(previous?.data?.paymentStatus || "").toLowerCase() === "paid";
+    if (!previous) {
+      console.error(`⚠️ No row with stripeSessionId ${session.id} found in ${TREATMENT_SHEET} — status NOT updated.`);
+    } else {
+      console.log(`✅ ${TREATMENT_SHEET}: ${session.id} marked Paid (was: ${previous.data.paymentStatus || "empty"})`);
+    }
+  } catch (sheetErr) {
+    console.error("⚠️ TreatmentBookingsPayment sheet update failed:", sheetErr.message);
+  }
+
+  if (alreadyPaid || emailedSessions.has(session.id)) return;
+  emailedSessions.add(session.id);
+
+  try {
+    await sendTreatmentBookingEmails({
+      bookingId: md.bookingId,
+      name: md.customerName,
+      email: session.customer_email || session.customer_details?.email,
+      phone: md.customerPhone,
+      treatmentName: md.treatmentName,
+      location: md.location,
+      preferredDate: md.preferredDate,
+      paymentOption: md.paymentOption || "deposit",
+      totalPrice: md.totalPrice,
+      amountPaid: md.depositPaid,
+      remainingBalance: md.remainingBalance,
+    });
+    console.log("✅ Treatment confirmation emails sent for", session.id);
+  } catch (mailErr) {
+    emailedSessions.delete(session.id);
+    console.error("⚠️ Treatment confirmation email failed:", mailErr.message);
+  }
+}
 
 /**
  * POST /payments/create-checkout-session
@@ -67,6 +125,12 @@ exports.createDepositCheckoutSession = async (req, res) => {
 
     if (!treatmentName || !totalPrice || !customerName || !customerEmail || !customerPhone) {
       return res.status(400).json({ error: "Missing required booking details." });
+    }
+
+    // NEW: clinic location (Upminster / Edinburgh / Newton Abbot)
+    const location = String(req.body.location || "").trim();
+    if (!TREATMENT_LOCATIONS.includes(location)) {
+      return res.status(400).json({ error: "Please select a valid clinic location." });
     }
 
     let total = Number(totalPrice);
@@ -144,6 +208,7 @@ exports.createDepositCheckoutSession = async (req, res) => {
         customerName,
         customerPhone,
         preferredDate: preferredDate || "",
+        location,
       },
       success_url: `${process.env.CLIENT_URL}/book-consultation?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.CLIENT_URL}/book-consultation`,
@@ -167,6 +232,7 @@ exports.createDepositCheckoutSession = async (req, res) => {
         discountPercent: `${discountPercent}%`,
         discountedPrice: total.toFixed(2),
         preferredDate: preferredDate || "Not specified",
+        location,
         paymentStatus: "Pending",
         paymentType: isFullPayment ? "Full Payment" : "20% Deposit",
         stripeSessionId: session.id,
@@ -190,12 +256,18 @@ exports.verifyCheckoutSession = async (req, res) => {
     const session = await stripe.checkout.sessions.retrieve(sessionId);
 
     if (session.payment_status === "paid") {
+      // Fallback in case the webhook didn't arrive — idempotent, safe to call twice.
+      if (session.metadata?.bookingType === "treatment_deposit") {
+        await finalizeTreatmentPayment(session);
+      }
+
       return res.status(200).json({
         paid: true,
         treatmentName: session.metadata.treatmentName,
         depositPaid: session.metadata.depositPaid,
         remainingBalance: session.metadata.remainingBalance,
         paymentOption: session.metadata.paymentOption || "deposit", // NEW
+        location: session.metadata.location || "",
         customerEmail: session.customer_email,
       });
     }
@@ -247,16 +319,10 @@ exports.handleStripeWebhook = async (req, res) => {
           paid: session.metadata.depositPaid,
           remainingBalance: session.metadata.remainingBalance,
           preferredDate: session.metadata.preferredDate,
+          location: session.metadata.location,
         });
 
-        try {
-          await updateRowByField(TREATMENT_SHEET, "stripeSessionId", session.id, {
-            paymentStatus: "Paid",
-            updatedAt: new Date().toISOString(),
-          });
-        } catch (sheetErr) {
-          console.error("⚠️ TreatmentBookingsPayment sheet update failed:", sheetErr.message);
-        }
+        await finalizeTreatmentPayment(session);
       }
     } catch (err) {
       // Acknowledge receipt regardless, to avoid a Stripe retry storm — but

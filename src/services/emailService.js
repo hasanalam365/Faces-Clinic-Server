@@ -111,4 +111,106 @@ async function sendSubscriptionActiveEmails({
   });
 }
 
-module.exports = { sendEnrollmentConfirmationEmails, sendSubscriptionActiveEmails };
+
+/* ------------------------------------------------------------------ */
+/* Clinic treatment booking confirmation (customer + admin)            */
+/* ------------------------------------------------------------------ */
+const esc = (v) =>
+  String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+const wrapClinic = (title, bodyHtml) => `
+  <div style="max-width:600px;margin:0 auto;font-family:Arial,sans-serif;background:#fff;border:1px solid #e5e5e5;border-radius:12px;overflow:hidden;">
+    <div style="background:#111111;padding:24px 28px;text-align:center;">
+      <h1 style="margin:0;color:#fff;font-size:22px;letter-spacing:1px;">Faces On Faces</h1>
+      <p style="margin:6px 0 0;color:#d4d4d4;font-size:13px;">${title}</p>
+    </div>
+    <div style="padding:30px 28px;">${bodyHtml}</div>
+    <div style="background:#f8f8f8;padding:16px 28px;text-align:center;border-top:1px solid #eeeeee;">
+      <p style="margin:0;color:#888888;font-size:11px;">This is an automated notification from Faces On Faces.</p>
+    </div>
+  </div>
+`;
+
+async function sendTreatmentBookingEmails({
+  bookingId,
+  name,
+  email,
+  phone,
+  treatmentName,
+  location,
+  preferredDate,
+  paymentOption,
+  totalPrice,
+  amountPaid,
+  remainingBalance,
+}) {
+  const isFull = paymentOption === "full";
+  const paymentLabel = isFull ? "Full Payment" : "20% Deposit";
+
+  const details = `
+    ${row("Treatment", esc(treatmentName))}
+    ${row("Location", esc(location || "Not specified"))}
+    ${preferredDate ? row("Preferred Date", esc(preferredDate)) : ""}
+    ${row("Payment Type", paymentLabel)}
+    ${totalPrice ? row("Total Price", `£${esc(totalPrice)}`) : ""}
+    ${row("Amount Paid", `£${esc(amountPaid)}`)}
+    ${row("Due On The Day", `£${esc(isFull ? "0.00" : remainingBalance)}`)}
+  `;
+
+  const adminHtml = wrapClinic(
+    "New Treatment Booking",
+    `
+      ${row("Booking ID", esc(bookingId))}
+      ${row("Name", esc(name))}
+      ${row("Email", esc(email))}
+      ${row("Phone", esc(phone))}
+      ${details}
+    `
+  );
+
+  const userHtml = wrapClinic(
+    "Treatment Booking Confirmed",
+    `
+      <h2 style="margin:0 0 12px;color:#111111;">Thank you ${esc(name)}! 🎉</h2>
+      <p style="color:#555555;line-height:1.7;">Your payment has been received and your treatment booking with Faces On Faces is confirmed.</p>
+      ${details}
+      <p style="color:#555555;line-height:1.7;">${
+        isFull
+          ? "Nothing further is due on the day of your treatment."
+          : "The remaining balance is payable on the day of your treatment."
+      } Our team will be in touch shortly if we need anything else.</p>
+    `
+  );
+
+  const adminTo = process.env.ADMIN_EMAIL || process.env.EMAIL_USER;
+
+  // Send independently so one failure doesn't stop the other email.
+  const results = await Promise.allSettled([
+    transporter.sendMail({
+      from: `"Faces On Faces" <${process.env.EMAIL_USER}>`,
+      to: adminTo,
+      subject: `New Treatment Booking - ${treatmentName} (${location || "No location"})`,
+      html: adminHtml,
+    }),
+    email
+      ? transporter.sendMail({
+          from: `"Faces On Faces" <${process.env.EMAIL_USER}>`,
+          to: email,
+          subject: "🎉 Treatment Booking Confirmed – Faces On Faces",
+          html: userHtml,
+        })
+      : Promise.resolve(),
+  ]);
+
+  results.forEach((r, i) => {
+    if (r.status === "rejected") {
+      console.error(`⚠️ Treatment ${i === 0 ? "admin" : "customer"} email failed:`, r.reason?.message || r.reason);
+    }
+  });
+}
+
+module.exports = { sendEnrollmentConfirmationEmails, sendSubscriptionActiveEmails, sendTreatmentBookingEmails };
