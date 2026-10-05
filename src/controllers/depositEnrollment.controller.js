@@ -14,6 +14,7 @@ const stripe = require("../config/stripe");
 const courses = require("../config/courses");
 const { insertRow, findRowByField } = require("../services/sheetsDb");
 const { generateId } = require("../utils/generateId");
+const { fulfillEnrollment } = require("../services/enrollmentFulfillment");
 
 const TAB = "DepositEnrollments";
 
@@ -91,8 +92,21 @@ exports.verifyDepositEnrollmentSession = async (req, res) => {
     const { sessionId } = req.params;
     const session = await stripe.checkout.sessions.retrieve(sessionId);
 
+    if (session.metadata?.flowType !== "deposit_enrollment") {
+      return res.status(400).json({ error: "Invalid session." });
+    }
+
     if (session.payment_status !== "paid") {
       return res.status(200).json({ paid: false });
+    }
+
+    // Fallback in case the Stripe webhook is slow/missed: mark the row "Paid"
+    // and send the emails. fulfillEnrollment() is idempotent (skips if the
+    // row is already "Paid"), so the webhook and this can both run safely.
+    try {
+      await fulfillEnrollment(session, TAB);
+    } catch (fulfilErr) {
+      console.error("Deposit enrollment fulfil (verify) error:", fulfilErr);
     }
 
     const found = await findRowByField(TAB, "enrollmentId", session.metadata?.enrollmentId);
