@@ -15,8 +15,14 @@
 //        =IMPORTXML(...) would run). RAW stores exactly what we send.
 //  • A field with no matching column header now logs a warning instead of
 //    being dropped silently.
+//  • NEW: columns listed in AUTO_ADD_COLUMNS are added to row 1 automatically
+//    (at the end) if a tab doesn't have them yet. Only these names are
+//    allowed, so a typo in a controller can never create junk columns.
 
 const { sheets, SPREADSHEET_ID } = require("../config/sheetsClient");
+
+// Header names this layer may create on its own.
+const AUTO_ADD_COLUMNS = ["location", "date"];
 
 function colLetter(index) {
   let letter = "";
@@ -53,6 +59,24 @@ async function getHeaders(tabName) {
   return headers;
 }
 
+// Adds any missing AUTO_ADD_COLUMNS (that the caller is actually sending)
+// to the end of row 1, and returns the up-to-date header list.
+async function ensureColumns(tabName, headers, obj) {
+  const missing = AUTO_ADD_COLUMNS.filter((c) => obj[c] !== undefined && !headers.includes(c));
+  if (!missing.length) return headers;
+
+  const startCol = colLetter(headers.length);
+  const endCol = colLetter(headers.length + missing.length - 1);
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${tabName}!${startCol}1:${endCol}1`,
+    valueInputOption: "RAW",
+    requestBody: { values: [missing] },
+  });
+  console.log(`✅ sheetsDb: added column(s) [${missing.join(", ")}] to tab "${tabName}"`);
+  return [...headers, ...missing];
+}
+
 async function getAllRows(tabName) {
   const headers = await getHeaders(tabName);
   const res = await sheets.spreadsheets.values.get({
@@ -64,7 +88,8 @@ async function getAllRows(tabName) {
 }
 
 async function insertRow(tabName, rowObject) {
-  const headers = await getHeaders(tabName);
+  let headers = await getHeaders(tabName);
+  headers = await ensureColumns(tabName, headers, rowObject);
   warnUnknownFields(tabName, headers, rowObject);
   const row = headers.map((h) => (rowObject[h] !== undefined && rowObject[h] !== null ? rowObject[h] : ""));
   await sheets.spreadsheets.values.append({
@@ -95,7 +120,8 @@ async function findRowByField(tabName, fieldName, value) {
 }
 
 async function updateRowByNumber(tabName, rowNumber, updatesObject) {
-  const headers = await getHeaders(tabName);
+  let headers = await getHeaders(tabName);
+  headers = await ensureColumns(tabName, headers, updatesObject);
   warnUnknownFields(tabName, headers, updatesObject);
   const range = `${tabName}!A${rowNumber}:${colLetter(headers.length - 1)}${rowNumber}`;
 

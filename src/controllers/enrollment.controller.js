@@ -12,6 +12,10 @@
 // cancel_url point at /enroll/:courseId, matching the `path` used for this
 // option in Bookcourse.jsx. Adjust if your actual confirmation page lives
 // somewhere else.
+//
+// NEW: `location` and `date` (chosen in ScheduleSelector) are now saved to
+// the "Enrollments" tab. Add two header cells named exactly  location  and
+// date  to row 1 of that tab.
 const stripe = require("../config/stripe");
 const courses = require("../config/courses");
 const { insertRow, findRowByField } = require("../services/sheetsDb");
@@ -19,9 +23,15 @@ const { generateId } = require("../utils/generateId");
 
 const TAB = "Enrollments";
 
+// Plain-text, trimmed, length-capped (location/date are free text from the client).
+const clean = (v) => String(v ?? "").replace(/[<>]/g, "").trim().slice(0, 100);
+
 exports.createEnrollmentCheckout = async (req, res) => {
   try {
     const { courseId, name, email, phone } = req.body;
+    const location = clean(req.body.location);
+    const date = clean(req.body.date);
+
     if (!courseId || !name || !email || !phone) {
       return res.status(400).json({ error: "Missing required enrollment details." });
     }
@@ -38,6 +48,8 @@ exports.createEnrollmentCheckout = async (req, res) => {
       phone,
       courseId,
       courseName: course.name,
+      location,
+      date,
       amount: (course.fullPrice / 100).toFixed(2),
       remainingBalance: "0.00",
       paymentStatus: "Pending",
@@ -67,7 +79,7 @@ exports.createEnrollmentCheckout = async (req, res) => {
           quantity: 1,
         },
       ],
-      metadata: { flowType: "enrollment", enrollmentId },
+      metadata: { flowType: "enrollment", enrollmentId, location, date },
       success_url: `${process.env.CLIENT_URL}/enroll/${courseId}?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.CLIENT_URL}/enroll/${courseId}`,
     });

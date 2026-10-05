@@ -8,6 +8,10 @@
 // number of instalments — it keeps charging until cancelled. Both amounts
 // are snapshotted here, at signing time, so a later price change in
 // courses.js can't alter what an already-signed enrollment gets charged.
+//
+// NEW: `location` and `date` are now saved to the "SubscriptionEnrollments"
+// tab. Add two header cells named exactly  location  and  date  to row 1
+// (e.g. right after updatedAt).
 const { body, validationResult } = require("express-validator");
 const sanitizeHtml = require("sanitize-html");
 const courses = require("../config/courses");
@@ -24,6 +28,9 @@ exports.validation = [
   body("email").trim().isEmail().normalizeEmail(),
   body("phone").trim().notEmpty().isLength({ max: 20 }),
   body("courseId").trim().notEmpty(),
+  // Optional: courses without a schedule send empty strings.
+  body("location").optional({ values: "falsy" }).trim().isLength({ max: 100 }),
+  body("date").optional({ values: "falsy" }).trim().isLength({ max: 100 }),
 ];
 
 exports.createAgreement = async (req, res) => {
@@ -39,6 +46,8 @@ exports.createAgreement = async (req, res) => {
     const safeName = clean(name);
     const safeEmail = clean(email);
     const safePhone = clean(phone);
+    const safeLocation = clean(req.body.location).trim().slice(0, 100);
+    const safeDate = clean(req.body.date).trim().slice(0, 100);
     const enrollmentId = generateId();
 
     await insertRow(TAB, {
@@ -48,6 +57,8 @@ exports.createAgreement = async (req, res) => {
       phone: safePhone,
       courseId,
       courseName: course.name,
+      location: safeLocation,
+      date: safeDate,
       // Snapshot NOW, at signing time — the first-payment checkout and the
       // GoCardless subscription later read THESE stored values, not
       // courses.js again.

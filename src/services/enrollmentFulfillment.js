@@ -12,6 +12,8 @@
 // For the monthly plan: markFirstPaymentPaid() below checks the Stripe
 // session against the enrolment's stored SETUP FEE (not a "first
 // instalment" — the monthly fee afterwards is a separate, ongoing charge).
+//
+// NEW: location + date are read from the sheet row and passed to the emails.
 
 const { findRowByField, updateRowByField } = require("./sheetsDb");
 const { sendEnrollmentConfirmationEmails } = require("./emailService");
@@ -48,6 +50,8 @@ async function fulfillEnrollment(session, tabName) {
     email: found.data.email,
     phone: found.data.phone,
     courseName: found.data.courseName,
+    location: found.data.location,
+    date: found.data.date,
     amount: found.data.amount,
     remainingBalance: found.data.remainingBalance,
   });

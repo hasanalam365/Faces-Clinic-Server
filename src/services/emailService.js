@@ -17,7 +17,30 @@ const wrap = (title, bodyHtml) => `
 const row = (label, value) =>
   `<p style="margin:0 0 10px;"><strong>${label}:</strong> <span style="color:#555555;">${value}</span></p>`;
 
-async function sendEnrollmentConfirmationEmails({ type, name, email, phone, courseName, amount, remainingBalance }) {
+/* HTML-escape for values that come from the customer. */
+const esc = (v) =>
+  String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+/* Course location + date rows. Returns "" when neither was chosen
+   (e.g. a course that has no schedule), so emails stay unchanged then. */
+const scheduleRows = (location, date) =>
+  `${location ? row("Location", esc(location)) : ""}${date ? row("Course Date", esc(date)) : ""}`;
+
+async function sendEnrollmentConfirmationEmails({
+  type,
+  name,
+  email,
+  phone,
+  courseName,
+  location,
+  date,
+  amount,
+  remainingBalance,
+}) {
   const isDeposit = type === "deposit";
 
   const adminHtml = wrap(
@@ -27,6 +50,7 @@ async function sendEnrollmentConfirmationEmails({ type, name, email, phone, cour
       ${row("Email", email)}
       ${row("Phone", phone)}
       ${row("Course", courseName)}
+      ${scheduleRows(location, date)}
       ${row("Amount Paid", `£${amount}`)}
       ${isDeposit ? row("Remaining Balance", `£${remainingBalance}`) : ""}
     `
@@ -37,6 +61,7 @@ async function sendEnrollmentConfirmationEmails({ type, name, email, phone, cour
     `
       <h2 style="margin:0 0 12px;color:#111111;">Congratulations ${name}! 🎉</h2>
       <p style="color:#555555;line-height:1.7;">Thank you for enrolling with Faces On Faces Academy on the <strong>${courseName}</strong>.</p>
+      ${scheduleRows(location, date)}
       ${row("Amount Paid", `£${amount}`)}
       ${isDeposit ? row("Remaining Balance", `£${remainingBalance}`) : ""}
       <p style="color:#555555;line-height:1.7;">Our admissions team will be in touch shortly with your course schedule and next steps.</p>
@@ -63,6 +88,8 @@ async function sendSubscriptionActiveEmails({
   email,
   phone,
   courseName,
+  location,
+  date,
   firstPaymentAmount,
   monthlyAmount,
   installments,
@@ -76,6 +103,7 @@ async function sendSubscriptionActiveEmails({
       ${row("Email", email)}
       ${row("Phone", phone)}
       ${row("Course", courseName)}
+      ${scheduleRows(location, date)}
       ${row("First Payment (Stripe)", `£${firstPaymentAmount}`)}
       ${row("Monthly Amount", `£${monthlyAmount}`)}
       ${row("Number of Payments", installments)}
@@ -89,6 +117,7 @@ async function sendSubscriptionActiveEmails({
     `
       <h2 style="margin:0 0 12px;color:#111111;">You're all set, ${name}! 🎉</h2>
       <p style="color:#555555;line-height:1.7;">Your first payment has been received and your Direct Debit for the <strong>${courseName}</strong> is now active.</p>
+      ${scheduleRows(location, date)}
       ${row("First Payment (paid)", `£${firstPaymentAmount}`)}
       ${row("Monthly Payment", `£${monthlyAmount}`)}
       ${row("Number of Monthly Payments", installments)}
@@ -115,12 +144,6 @@ async function sendSubscriptionActiveEmails({
 /* ------------------------------------------------------------------ */
 /* Clinic treatment booking confirmation (customer + admin)            */
 /* ------------------------------------------------------------------ */
-const esc = (v) =>
-  String(v ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 
 const wrapClinic = (title, bodyHtml) => `
   <div style="max-width:600px;margin:0 auto;font-family:Arial,sans-serif;background:#fff;border:1px solid #e5e5e5;border-radius:12px;overflow:hidden;">

@@ -7,6 +7,9 @@
 //
 // ASSUMPTION (please check): success_url / cancel_url point at
 // /deposit-enroll/:courseId, matching Bookcourse.jsx. Adjust if different.
+//
+// NEW: `location` and `date` are now saved to the "DepositEnrollments" tab.
+// Add two header cells named exactly  location  and  date  to row 1 of it.
 const stripe = require("../config/stripe");
 const courses = require("../config/courses");
 const { insertRow, findRowByField } = require("../services/sheetsDb");
@@ -14,9 +17,15 @@ const { generateId } = require("../utils/generateId");
 
 const TAB = "DepositEnrollments";
 
+// Plain-text, trimmed, length-capped (location/date are free text from the client).
+const clean = (v) => String(v ?? "").replace(/[<>]/g, "").trim().slice(0, 100);
+
 exports.createDepositEnrollmentCheckout = async (req, res) => {
   try {
     const { courseId, name, email, phone } = req.body;
+    const location = clean(req.body.location);
+    const date = clean(req.body.date);
+
     if (!courseId || !name || !email || !phone) {
       return res.status(400).json({ error: "Missing required enrollment details." });
     }
@@ -34,6 +43,8 @@ exports.createDepositEnrollmentCheckout = async (req, res) => {
       phone,
       courseId,
       courseName: course.name,
+      location,
+      date,
       amount: (course.depositAmount / 100).toFixed(2),
       remainingBalance,
       paymentStatus: "Pending",
@@ -63,7 +74,7 @@ exports.createDepositEnrollmentCheckout = async (req, res) => {
           quantity: 1,
         },
       ],
-      metadata: { flowType: "deposit_enrollment", enrollmentId },
+      metadata: { flowType: "deposit_enrollment", enrollmentId, location, date },
       success_url: `${process.env.CLIENT_URL}/deposit-enroll/${courseId}?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.CLIENT_URL}/deposit-enroll/${courseId}`,
     });
