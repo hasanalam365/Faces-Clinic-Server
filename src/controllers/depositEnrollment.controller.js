@@ -1,6 +1,6 @@
 // controllers/depositEnrollment.controller.js
 //
-// 20% deposit course enrollment (option 2 of 3 in BookCourse.jsx). Same
+// Fixed £250 deposit course enrollment (option 2 of 3 in BookCourse.jsx). Same
 // pattern as controllers/enrollment.controller.js — completion is handled by
 // the shared Stripe webhook (fulfillEnrollment) against the
 // "DepositEnrollments" tab, not by this file.
@@ -67,7 +67,7 @@ exports.createDepositEnrollmentCheckout = async (req, res) => {
           price_data: {
             currency: (course.currency || "GBP").toLowerCase(),
             product_data: {
-              name: `${course.name} — 20% Deposit`,
+              name: `${course.name} — Course Deposit`,
               description: `Deposit to secure your place. The remaining £${remainingBalance} is due before the course starts.`,
             },
             unit_amount: course.depositAmount,

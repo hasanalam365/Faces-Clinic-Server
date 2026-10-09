@@ -6,7 +6,7 @@
 //
 // ─── The three payment options ─────────────────────────────────────────────
 //  1. Full          → fullPrice, one Stripe payment
-//  2. Deposit       → 20% of fullPrice via Stripe (rest due before the course)
+//  2. Deposit       → FIXED £250 via Stripe (rest due before the course)
 //  3. Monthly plan  → SetupFee via Stripe (once), THEN a MonthlyFee via
 //                     GoCardless Direct Debit that repeats indefinitely,
 //                     for as long as the student stays enrolled — this does
@@ -18,7 +18,8 @@
 //  Every course has its OWN SignWell agreement template (`signwellTemplateId`).
 //  If a course's env var isn't set yet, it falls back to SIGNWELL_TEMPLATE_ID.
 
-const DEPOSIT_PERCENT = 20;
+// Fixed deposit in PENCE (£250). Capped at fullPrice in buildCourse().
+const DEPOSIT_AMOUNT = 25000;
 
 // `id` values must match the ids in Courses.jsx AND AcademyCourseDetails.jsx.
 // setupFee / monthlyFee are in PENCE.
@@ -34,7 +35,7 @@ const CATALOGUE = {
   "foundation-anti-wrinkle": {
     name: "Foundation Anti-Wrinkle Course",
     fullPrice: 85000, // £850
-    setupFee: 15000, // £250
+    setupFee: 15000, // £150
     monthlyFee: 5000, // £50/month
     signwellTemplateId:
       process.env.SIGNWELL_TEMPLATE_ANTI_WRINKLE || process.env.SIGNWELL_TEMPLATE_ID,
@@ -49,7 +50,7 @@ const CATALOGUE = {
   },
   "liquid-bbl-2days-with-ultrasound": {
     name: "Liquid BBL – 2 Days Course (With Ultrasound)",
-    fullPrice: 240000, 
+    fullPrice: 240000, // £2,400
     setupFee: 25000, // £250
     monthlyFee: 10000, // £100/month
     signwellTemplateId:
@@ -57,7 +58,7 @@ const CATALOGUE = {
   },
   "liquid-bbl-2days-without-ultrasound": {
     name: "Liquid BBL – 2 Days Course (Without Ultrasound)",
-    fullPrice: 160000, // £2,599
+    fullPrice: 160000, // £1,600
     setupFee: 25000, // £250
     monthlyFee: 10000, // £100/month
     signwellTemplateId:
@@ -65,7 +66,7 @@ const CATALOGUE = {
   },
   "advanced-filler-anti-wrinkle": {
     name: "Advanced Dermal Filler & Anti-Wrinkle",
-    fullPrice: 110000, // £1,200 — site shows £1,200–£1,499; Stripe needs one number, CONFIRM
+    fullPrice: 110000, // £1,100
     setupFee: 25000, // £250
     monthlyFee: 10000, // £100/month
     signwellTemplateId:
@@ -89,7 +90,7 @@ const CATALOGUE = {
   },
   "iv-drip-vitamin-injections": {
     name: "IV Drip and Vitamin Injections Training Course",
-    fullPrice: 70000, // £999
+    fullPrice: 70000, // £700
     setupFee: 15000, // £150
     monthlyFee: 5000, // £50/month
     signwellTemplateId:
@@ -97,7 +98,7 @@ const CATALOGUE = {
   },
   "phlebotomy-prp-hair": {
     name: "Phlebotomy, PRP, and PRP Hair Training Course",
-    fullPrice: 90000, // £1,100
+    fullPrice: 90000, // £900
     setupFee: 15000, // £150
     monthlyFee: 5000, // £50/month
     signwellTemplateId:
@@ -109,7 +110,7 @@ function buildCourse(id, def) {
   const { fullPrice } = def;
 
   // 2. Deposit
-  const depositAmount = Math.round((fullPrice * DEPOSIT_PERCENT) / 100);
+  const depositAmount = Math.min(DEPOSIT_AMOUNT, fullPrice);
   const remainingAfterDeposit = fullPrice - depositAmount;
 
   // 3. Monthly plan — flat setup fee + ongoing monthly fee. NOT derived from
