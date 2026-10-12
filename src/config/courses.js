@@ -66,7 +66,7 @@ const CATALOGUE = {
   },
   "advanced-filler-anti-wrinkle": {
     name: "Advanced Dermal Filler & Anti-Wrinkle",
-    fullPrice: 110000, // £1,100
+    fullPrice: 140000, // £1,100
     setupFee: 25000, // £250
     monthlyFee: 10000, // £100/month
     signwellTemplateId:
